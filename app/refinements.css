@@ -594,3 +594,13 @@ a:focus-visible {
     animation-iteration-count: 1 !important;
   }
 }
+
+.loading-banner {
+  margin-bottom: 12px;
+  border: 1px solid #d7e4f2;
+  border-radius: 8px;
+  background: #f4f8fc;
+  color: #49637e;
+  font-size: 12px;
+  padding: 10px 12px;
+}

@@ -12,17 +12,27 @@ MVP nội bộ cho Alpha Books theo dõi và review quyết định cạnh tranh
 ## Chạy local
 
 ```bash
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 Mở `http://localhost:3000`.
 
 ```bash
-npm run test
-npm run typecheck
-npm run build
+pnpm test
+pnpm typecheck
+pnpm build
 ```
+
+## Nền tảng production an toàn
+
+- `demo` là chế độ mặc định, dùng dữ liệu mẫu để trình diễn và không cần dịch vụ bên ngoài.
+- `database` đọc PostgreSQL ở server-side khi đã cấu hình `DATABASE_URL` và `ALPHA_DATA_MODE=database`.
+- Chạy migration `db/migrations/001_initial_schema.sql` bằng công cụ migration của nhà cung cấp PostgreSQL trước khi bật database mode.
+- Sao chép `.env.example` thành `.env.local`; không đưa `.env.local`, token hay Partner Key vào Git.
+- `/api/health` kiểm tra trạng thái ứng dụng và database; `/api/dashboard` trả snapshot cho giao diện.
+
+Database mode hiện chỉ đọc dữ liệu. Luồng approval, worker Shopee và ghi giá thật vẫn bị khóa cho tới khi hoàn tất xác thực quyền, audit và pilot một SKU.
 
 ## Cấu trúc chính
 

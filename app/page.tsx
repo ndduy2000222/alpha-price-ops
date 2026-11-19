@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { initialDecisions, initialSkus } from "@/src/lib/mock-data";
 import { calculateRecommendation } from "@/src/lib/pricing";
 import { DecisionRecord, OperatingMode, TrackedSku } from "@/src/lib/types";
 
@@ -35,13 +34,37 @@ const nav = [
 
 export default function Home() {
   const [page, setPage] = useState("overview");
-  const [skus, setSkus] = useState<TrackedSku[]>(initialSkus);
-  const [logs, setLogs] = useState<DecisionRecord[]>(initialDecisions);
+  const [skus, setSkus] = useState<TrackedSku[]>([]);
+  const [logs, setLogs] = useState<DecisionRecord[]>([]);
+  const [dataMode, setDataMode] = useState<"demo" | "database">("demo");
+  const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<TrackedSku | null>(null);
   const [globalPaused, setGlobalPaused] = useState(false);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [toast, setToast] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/dashboard", { cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) throw new Error("Không thể tải dữ liệu dashboard.");
+        return response.json() as Promise<{ mode: "demo" | "database"; skus: TrackedSku[]; decisions: DecisionRecord[] }>;
+      })
+      .then((snapshot) => {
+        if (cancelled) return;
+        setSkus(snapshot.skus);
+        setLogs(snapshot.decisions);
+        setDataMode(snapshot.mode);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setToast(error instanceof Error ? error.message : "Không thể tải dữ liệu dashboard.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const queue = skus.filter((item) => item.status === "needs_review" || item.status === "suggested");
   const filtered = useMemo(() => skus.filter((item) => {
@@ -81,12 +104,13 @@ export default function Home() {
       <div className="brand"><span className="brand-mark" /> <span>Alpha Price Ops</span></div>
       <div className="sidebar-label">VẬN HÀNH</div>
       <nav aria-label="Điều hướng chính">{nav.map((entry) => <button key={entry.id} aria-current={page === entry.id ? "page" : undefined} className={`nav-item ${page === entry.id ? "active" : ""}`} onClick={() => setPage(entry.id)}><Icon name={entry.icon} /><span>{entry.label}</span>{entry.id === "queue" && <span className="nav-count" aria-label={`${queue.length} mục chờ duyệt`}>{queue.length}</span>}</button>)}</nav>
-      <div className="sidebar-bottom"><div className="worker-dot"><span /> Worker mock đang chạy</div><div className="sidebar-note">Nguồn dữ liệu hiện tại<br /><strong>Mock adapter</strong></div></div>
+      <div className="sidebar-bottom"><div className="worker-dot"><span /> {dataMode === "database" ? "Database adapter" : "Worker mock đang chạy"}</div><div className="sidebar-note">Nguồn dữ liệu hiện tại<br /><strong>{dataMode === "database" ? "PostgreSQL" : "Mock adapter"}</strong></div></div>
     </aside>
     <main className="main-shell" id="main-content" tabIndex={-1}>
       <header className="topbar"><div className="top-group"><span className="top-label">Sàn</span><button className="select-button"><span className="shopee-icon">S</span>Shopee <Icon name="chevron" /></button><span className="divider" /><button className="select-button shop-select">Nhà Sách Alpha Official <Icon name="chevron" /></button></div><div className="top-group"><span className={`live-status ${globalPaused ? "paused" : ""}`}><span /> {globalPaused ? "Đã tạm dừng" : "Theo dõi đang hoạt động"}</span><span className="updated">Cập nhật: 14:26, 19/11/2026</span></div></header>
       <div className="content">
-        {page === "overview" && <Overview skus={skus} queue={queue} setPage={setPage} onSelect={setSelected} globalPaused={globalPaused} />}
+        {loading && <div className="loading-banner" role="status">Đang tải dữ liệu vận hành…</div>}
+        {page === "overview" && <Overview skus={skus} queue={queue} setPage={setPage} onSelect={setSelected} globalPaused={globalPaused} dataMode={dataMode} />}
         {page === "competition" && <Competition skus={filtered} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} onSelect={setSelected} onPause={togglePause} />}
         {page === "queue" && <Queue queue={queue} onApprove={approve} onReject={reject} onRefresh={refreshPreview} onSelect={setSelected} globalPaused={globalPaused} />}
         {page === "journal" && <Journal logs={logs} />}
@@ -103,14 +127,14 @@ function PageTitle({ eyebrow, title, description, action }: { eyebrow?: string; 
   return <div className="page-title"><div>{eyebrow && <div className="eyebrow">{eyebrow}</div>}<h1>{title}</h1>{description && <p>{description}</p>}</div>{action}</div>;
 }
 
-function Overview({ skus, queue, setPage, onSelect, globalPaused }: { skus: TrackedSku[]; queue: TrackedSku[]; setPage: (p: string) => void; onSelect: (s: TrackedSku) => void; globalPaused: boolean }) {
+function Overview({ skus, queue, setPage, onSelect, globalPaused, dataMode }: { skus: TrackedSku[]; queue: TrackedSku[]; setPage: (p: string) => void; onSelect: (s: TrackedSku) => void; globalPaused: boolean; dataMode: "demo" | "database" }) {
   const below = skus.filter((item) => item.recommendation && item.currentPrice > (item.recommendation ?? item.currentPrice)).length;
   const unchanged = skus.filter((item) => item.status === "unchanged").length;
   return <><PageTitle title="Tổng quan" description="Theo dõi và điều chỉnh giá trong giới hạn bạn đã đặt." action={<select aria-label="Khoảng thời gian thống kê" className="date-select" defaultValue="7"><option value="7">7 ngày gần đây</option><option value="30">30 ngày gần đây</option></select>} />
-    <div className="data-context"><span className="context-badge">Dữ liệu mô phỏng</span><span>Các chỉ số bên dưới được tính trực tiếp từ {skus.length} SKU mẫu hiện có.</span></div>
-    <div className="metric-grid"><Metric label="SKU đang theo dõi" value={String(skus.length)} detail="trong phạm vi hiện tại" tone="neutral" /><Metric label="Đang cao hơn đối thủ" value={String(below)} detail={`trên ${skus.length} SKU mẫu`} tone="orange" /><Metric label="Đề xuất điều chỉnh" value={String(queue.length)} detail="đang chờ người duyệt" tone="amber" /><Metric label="Giữ nguyên an toàn" value={String(unchanged)} detail="không cần điều chỉnh" tone="green" /></div>
+    <div className="data-context"><span className="context-badge">{dataMode === "database" ? "Dữ liệu PostgreSQL" : "Dữ liệu mô phỏng"}</span><span>{dataMode === "database" ? `Các chỉ số được đọc từ snapshot vận hành của ${skus.length} SKU.` : `Các chỉ số bên dưới được tính trực tiếp từ ${skus.length} SKU mẫu hiện có.`}</span></div>
+    <div className="metric-grid"><Metric label="SKU đang theo dõi" value={String(skus.length)} detail="trong phạm vi hiện tại" tone="neutral" /><Metric label="Đang cao hơn đối thủ" value={String(below)} detail={`trên ${skus.length} SKU`} tone="orange" /><Metric label="Đề xuất điều chỉnh" value={String(queue.length)} detail="đang chờ người duyệt" tone="amber" /><Metric label="Giữ nguyên an toàn" value={String(unchanged)} detail="không cần điều chỉnh" tone="green" /></div>
     <div className="dashboard-grid"><section className="surface competition-surface"><div className="section-heading"><div><h2>Cạnh tranh giá</h2><p>Giá đối thủ sau giảm trực tiếp của đúng phân loại.</p></div><button className="text-button" onClick={() => setPage("competition")}>Xem tất cả <Icon name="arrow" /></button></div><CompetitionTable items={skus.slice(0, 6)} onSelect={onSelect} compact /></section><aside className="right-rail"><QueueCard queue={queue.slice(0, 4)} onApprove={() => setPage("queue")} onSelect={onSelect} /><ActivityCard /></aside></div>
-    <div className="notice-bar"><span className="notice-icon">i</span><span><strong>{globalPaused ? "Toàn hệ thống đang tạm dừng." : "Đang ở chế độ an toàn."}</strong> Worker hiện chỉ tạo đề xuất từ <b>mock adapter</b>; chưa có quyền ghi giá thật lên Shopee.</span><button onClick={() => setPage("settings")}>Xem cài đặt</button></div>
+    <div className="notice-bar"><span className="notice-icon">i</span><span><strong>{globalPaused ? "Toàn hệ thống đang tạm dừng." : "Đang ở chế độ an toàn."}</strong> {dataMode === "database" ? "Dashboard đang đọc snapshot từ PostgreSQL;" : "Worker hiện chỉ tạo đề xuất từ mock adapter;"} chưa có quyền ghi giá thật lên Shopee.</span><button onClick={() => setPage("settings")}>Xem cài đặt</button></div>
   </>;
 }
 
