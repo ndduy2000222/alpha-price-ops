@@ -34,6 +34,10 @@ pnpm build
 
 Database mode hiện chỉ đọc dữ liệu. Luồng approval, worker Shopee và ghi giá thật vẫn bị khóa cho tới khi hoàn tất xác thực quyền, audit và pilot một SKU.
 
+## Callback Shopee Open Platform
+
+Callback OAuth production là `https://alpha-price-ops.vercel.app/api/integrations/shopee/callback`. App chỉ lưu token đã mã hóa ở server khi đủ `DATABASE_URL`, `ALPHA_DATA_MODE=database`, `SHOPEE_PARTNER_ID`, `SHOPEE_PARTNER_KEY` và khóa mã hóa 32-byte `SHOPEE_TOKEN_ENCRYPTION_KEY`. Không đưa Partner Key hoặc token vào frontend, log, commit hay hội thoại.
+
 ## Cấu trúc chính
 
 - `app/page.tsx`: giao diện vận hành và trạng thái mock có thể tương tác.
