@@ -101,8 +101,10 @@ export default function Home() {
   const syncProducts = async () => {
     if (syncing) return;
     setSyncing(true);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 55000);
     try {
-      const response = await fetch("/api/sync/shopee/products", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+      const response = await fetch("/api/sync/shopee/products", { method: "POST", headers: { "content-type": "application/json" }, body: "{}", signal: controller.signal });
       const result = await response.json() as { ok?: boolean; error?: string; itemsSeen?: number; modelsUpserted?: number };
       if (!response.ok || !result.ok) throw new Error(result.error ?? "Không thể đồng bộ sản phẩm Shopee.");
       const snapshot = await fetch("/api/dashboard", { cache: "no-store" }).then((value) => value.json()) as { mode: "demo" | "database"; skus: TrackedSku[]; decisions: DecisionRecord[] };
@@ -111,8 +113,9 @@ export default function Home() {
       setDataMode(snapshot.mode);
       notify(`Đã đồng bộ ${result.itemsSeen ?? 0} sản phẩm và ${result.modelsUpserted ?? 0} phân loại từ Shopee.`);
     } catch (error) {
-      notify(error instanceof Error ? error.message : "Không thể đồng bộ sản phẩm Shopee.");
+      notify(error instanceof DOMException && error.name === "AbortError" ? "Đồng bộ quá thời gian chờ. Vui lòng kiểm tra lại quyền Shopee hoặc thử lại." : error instanceof Error ? error.message : "Không thể đồng bộ sản phẩm Shopee.");
     } finally {
+      clearTimeout(timeout);
       setSyncing(false);
     }
   };
