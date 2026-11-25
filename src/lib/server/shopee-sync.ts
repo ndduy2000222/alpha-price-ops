@@ -121,7 +121,15 @@ async function listItemPage(config: { partnerId: number; partnerKey: string; acc
 }
 
 function modelRows(item: JsonRecord): JsonRecord[] {
-  const explicitModels = [...records(item.model), ...records(item.models), ...records(item.model_list)];
+  const modelContainer = record(item.model);
+  const explicitModels = [
+    ...records(item.model),
+    ...records(item.models),
+    ...records(item.model_list),
+    ...records(modelContainer.model_list),
+    ...records(modelContainer.models),
+    ...records(modelContainer.model),
+  ];
   if (explicitModels.length > 0) return explicitModels;
   return [{
     model_id: item.item_id,
