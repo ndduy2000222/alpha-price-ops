@@ -106,6 +106,7 @@ export default function Home() {
       let runId: string | undefined;
       let totalItems = 0;
       let totalModels = 0;
+      const statusTotals: Record<string, number> = {};
       let complete = false;
       while (!complete) {
         const controller = new AbortController();
@@ -116,20 +117,22 @@ export default function Home() {
         } finally {
           clearTimeout(timeout);
         }
-        const result = await response.json() as { ok?: boolean; error?: string; runId?: string; complete?: boolean; nextCursor?: { statusIndex: number; offset: number } | null; statusFilter?: string; listedOnPage?: number; itemsSeen?: number; modelsUpserted?: number };
+        const result = await response.json() as { ok?: boolean; error?: string; runId?: string; complete?: boolean; nextCursor?: { statusIndex: number; offset: number } | null; statusFilter?: string; listedOnPage?: number; totalForStatus?: number | null; itemsSeen?: number; modelsUpserted?: number };
         if (!response.ok || !result.ok) throw new Error(result.error ?? "Không thể đồng bộ sản phẩm Shopee.");
         runId = result.runId ?? runId;
         cursor = result.nextCursor ?? null;
         complete = result.complete === true;
         totalItems += result.itemsSeen ?? 0;
         totalModels += result.modelsUpserted ?? 0;
+        if (result.statusFilter && result.totalForStatus != null) statusTotals[result.statusFilter] = Math.max(statusTotals[result.statusFilter] ?? 0, result.totalForStatus);
         if (!complete) notify(`Đang đồng bộ ${result.statusFilter ?? "Shopee"}: đã xử lý ${totalItems} sản phẩm…`);
       }
       const snapshot = await fetch("/api/dashboard", { cache: "no-store" }).then((value) => value.json()) as { mode: "demo" | "database"; skus: TrackedSku[]; decisions: DecisionRecord[] };
       setSkus(snapshot.skus);
       setLogs(snapshot.decisions);
       setDataMode(snapshot.mode);
-      notify(`Đã đồng bộ ${totalItems} sản phẩm và ${totalModels} phân loại từ Shopee.`);
+      const statusSummary = Object.entries(statusTotals).map(([status, total]) => `${status}: ${total}`).join(", ");
+      notify(`Đã đồng bộ ${totalItems} sản phẩm, ${totalModels} phân loại. Shopee trả về: ${statusSummary || "chưa có thống kê"}.`);
     } catch (error) {
       notify(error instanceof DOMException && error.name === "AbortError" ? "Một lượt đồng bộ quá thời gian chờ. Bạn có thể bấm lại để tiếp tục." : error instanceof Error ? error.message : "Không thể đồng bộ sản phẩm Shopee.");
     } finally {
@@ -202,3 +205,4 @@ function Settings({ globalPaused, setGlobalPaused }: { globalPaused: boolean; se
 function Check({ label, done }: { label: string; done: boolean }) { return <div className={`check-row ${done ? "done" : ""}`}><span>{done ? "✓" : "—"}</span>{label}</div>; }
 
 function SkuModal({ item, onClose, onPause, onRefresh }: { item: TrackedSku; onClose: () => void; onPause: (id: string) => void; onRefresh: (s: TrackedSku) => void }) { const offer = item.competitorOffers[0]; useEffect(() => { const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); }; document.addEventListener("keydown", closeOnEscape); return () => document.removeEventListener("keydown", closeOnEscape); }, [onClose]); return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="sku-modal-title" onMouseDown={(e) => e.stopPropagation()}><div className="modal-header"><div><span className="eyebrow">CHI TIẾT SKU</span><h2 id="sku-modal-title">{item.title}</h2><p>{item.sku} · {item.variant}</p></div><button className="close-button" aria-label="Đóng chi tiết SKU" onClick={onClose}>×</button></div><div className="modal-stats"><div><span>Giá hiện tại</span><strong>{vnd(item.currentPrice)}</strong></div><div><span>Đối thủ thấp nhất</span><strong>{vnd(offer?.price)}</strong><small>{offer?.shopName}</small></div><div><span>Giá đề xuất</span><strong className="orange-text">{vnd(item.recommendation)}</strong><small>{item.mode} · {item.rule.kind === "amount" ? `-${vnd(item.rule.value)}` : `-${item.rule.value}%`}</small></div></div><div className="modal-section"><h3>Quyết định gần nhất</h3><div className="decision-box"><Status status={item.status} mode={item.mode} /><p>{item.reason}</p></div></div><div className="modal-section"><h3>Đối thủ được gắn</h3><div className="competitor-link"><span className="book-thumb">{offer?.itemName?.slice(0, 1) ?? "?"}</span><div><strong>{offer?.shopName ?? "Chưa gắn"}</strong><span>{offer?.itemName} · {offer?.variantName}</span><small>Nguồn {offer?.source} · cập nhật {offer ? new Date(offer.observedAt).toLocaleString("vi-VN") : "—"}</small></div><span className={offer?.inStock ? "stock-ok" : "stock-out"}>{offer?.inStock ? "Còn hàng" : "Hết hàng"}</span></div></div><div className="modal-footer"><button className="ghost-button danger" onClick={() => { onPause(item.id); onClose(); }}> {item.paused ? "Tiếp tục SKU" : "Tạm dừng SKU"}</button><div><button className="ghost-button" onClick={() => onRefresh(item)}>Đọc lại dữ liệu</button><button className="primary-button" onClick={onClose}>Đóng</button></div></div></div></div>; }
+
