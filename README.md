@@ -31,7 +31,7 @@ pnpm build
 - Chạy migration `db/migrations/001_initial_schema.sql` bằng công cụ migration của nhà cung cấp PostgreSQL trước khi bật database mode.
 - Sao chép `.env.example` thành `.env.local`; không đưa `.env.local`, token hay Partner Key vào Git.
 - `/api/health` kiểm tra trạng thái ứng dụng và database; `/api/dashboard` trả snapshot cho giao diện.
-- `POST /api/sync/shopee/products` đọc danh sách sản phẩm Shopee theo trang và theo các trạng thái `NORMAL`, `UNLIST`, `BANNED`, `DELETED`, sau đó lấy model/giá/tồn kho và lưu vào `products`, `product_models`, `price_snapshots`, `sync_runs`. Nút `Đồng bộ Shopee` trên dashboard gọi endpoint này.
+- `POST /api/sync/shopee/products` đọc danh sách sản phẩm Shopee theo từng trang nhỏ và theo các trạng thái `NORMAL`, `UNLIST`, `BANNED`, `DELETED`, sau đó lấy model/giá/tồn kho và lưu vào `products`, `product_models`, `price_snapshots`, `sync_runs`. Nút `Đồng bộ Shopee` tự chạy tiếp bằng cursor cho tới khi hết toàn bộ trang, phù hợp với shop có hàng nghìn sản phẩm.
 
 Database mode hiện đọc dữ liệu thật sau khi chạy sync. Luồng approval, worker định kỳ, dữ liệu đối thủ và ghi giá thật vẫn bị khóa cho tới khi hoàn tất kiểm chứng và pilot một SKU.
 
