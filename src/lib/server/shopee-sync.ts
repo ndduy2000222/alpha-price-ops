@@ -61,7 +61,19 @@ async function shopeeGet(path: string, config: { partnerId: number; partnerKey: 
   url.searchParams.set("shop_id", String(config.shopId));
   url.searchParams.set("sign", sign(path, timestamp, config.partnerId, config.partnerKey, config.accessToken, config.shopId));
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, String(value));
-  const response = await fetch(url, { cache: "no-store" });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12000);
+  let response: Response;
+  try {
+    response = await fetch(url, { cache: "no-store", signal: controller.signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(`Shopee API request timed out: ${path}`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!response.ok) throw new Error(`Shopee API HTTP ${response.status}`);
   const payload = record(await response.json());
   const error = apiError(payload);
@@ -103,11 +115,15 @@ function modelRows(item: JsonRecord): JsonRecord[] {
 }
 
 function priceInfo(model: JsonRecord, item: JsonRecord): JsonRecord {
-  return records(model.price_info)[0] ?? record(model.price_info) ?? records(item.price_info)[0] ?? record(item.price_info);
+  const modelInfo = records(model.price_info)[0] ?? (Object.keys(record(model.price_info)).length > 0 ? record(model.price_info) : null);
+  const itemInfo = records(item.price_info)[0] ?? (Object.keys(record(item.price_info)).length > 0 ? record(item.price_info) : null);
+  return modelInfo ?? itemInfo ?? {};
 }
 
 function stockInfo(model: JsonRecord, item: JsonRecord): JsonRecord {
-  return records(model.stock_info)[0] ?? record(model.stock_info) ?? records(item.stock_info)[0] ?? record(item.stock_info);
+  const modelInfo = records(model.stock_info)[0] ?? (Object.keys(record(model.stock_info)).length > 0 ? record(model.stock_info) : null);
+  const itemInfo = records(item.stock_info)[0] ?? (Object.keys(record(item.stock_info)).length > 0 ? record(item.stock_info) : null);
+  return modelInfo ?? itemInfo ?? {};
 }
 
 async function upsertItem(sql: NonNullable<ReturnType<typeof getSql>>, shopId: string, item: JsonRecord, observedAt: Date): Promise<{ models: number; snapshots: number; skipped: number }> {
@@ -191,7 +207,8 @@ export async function syncShopeeProducts(externalShopId?: string): Promise<SyncR
     for (let index = 0; index < itemIds.length; index += ITEM_BATCH_SIZE) {
       const batch = itemIds.slice(index, index + ITEM_BATCH_SIZE);
       const payload = await shopeeGet(ITEM_BASE_INFO_PATH, config, { item_id_list: batch.join(",") });
-      const items = records(record(payload.response).item_list).concat(records(record(payload.response).items));
+      const response = record(payload.response);
+      const items = records(response.item_list).concat(records(response.items), records(response.item));
       for (const item of items) {
         itemsSeen += 1;
         const result = await upsertItem(sql, connection.shop_id, item, observedAt);
@@ -212,4 +229,3 @@ export async function syncShopeeProducts(externalShopId?: string): Promise<SyncR
     throw error;
   }
 }
-
