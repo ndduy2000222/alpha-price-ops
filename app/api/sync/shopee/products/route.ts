@@ -8,11 +8,10 @@ export const maxDuration = 60;
 export async function POST(request: Request) {
   if (dataMode() !== "database") return NextResponse.json({ ok: false, error: "Database mode is required for product sync" }, { status: 503 });
   try {
-    const body = await request.json().catch(() => ({})) as { shopId?: string };
-    const result = await syncShopeeProducts(body.shopId);
+    const body = await request.json().catch(() => ({})) as { shopId?: string; cursor?: { statusIndex: number; offset: number } | null; runId?: string };
+    const result = await syncShopeeProducts(body.shopId, body.cursor ?? null, body.runId);
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Shopee product sync failed" }, { status: 502 });
   }
 }
-
