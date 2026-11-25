@@ -198,6 +198,20 @@ async function upsertItem(sql: NonNullable<ReturnType<typeof getSql>>, shopId: s
   return { models, snapshots, skipped };
 }
 
+async function mapConcurrent<T, R>(items: T[], concurrency: number, worker: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const runWorker = async () => {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= items.length) return;
+      results[index] = await worker(items[index]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => runWorker()));
+  return results;
+}
+
 export async function syncShopeeProducts(externalShopId?: string, cursor: SyncCursor | null = null, runId?: string): Promise<SyncResult> {
   if (dataMode() !== "database") throw new Error("Database mode is required for Shopee product sync");
   const sql = getSql();
@@ -230,9 +244,9 @@ export async function syncShopeeProducts(externalShopId?: string, cursor: SyncCu
       const payload = await shopeeGet(ITEM_BASE_INFO_PATH, config, { item_id_list: batch.join(",") });
       const response = record(payload.response);
       const items = records(response.item_list).concat(records(response.items), records(response.item)).map((item) => ({ ...item, item_status: text(item.item_status) ?? page.itemStatus }));
-      for (const item of items) {
-        itemsSeen += 1;
-        const result = await upsertItem(sql, connection.shop_id, item, observedAt);
+      const results = await mapConcurrent(items, 8, (item) => upsertItem(sql, connection.shop_id, item, observedAt));
+      itemsSeen += items.length;
+      for (const result of results) {
         if (result.models > 0) productsUpserted += 1;
         modelsUpserted += result.models;
         snapshotsCreated += result.snapshots;
@@ -255,3 +269,4 @@ export async function syncShopeeProducts(externalShopId?: string, cursor: SyncCu
     throw error;
   }
 }
+
