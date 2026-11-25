@@ -22,7 +22,7 @@ type ShopInfoResponse = {
   error?: string;
   message?: string;
   request_id?: string;
-  response?: { shop_name?: string; shop_logo?: string; description?: string };
+  response?: { shop_name?: string; name?: string; shop_logo?: string; description?: string } | null;
 };
 
 function config(): ShopeeConfig {
@@ -82,8 +82,12 @@ export async function getShopInfo(input: { accessToken: string; shopId: number }
   url.searchParams.set("sign", sign(SHOP_INFO_PATH, timestamp, input.accessToken, input.shopId));
   const payload = await readJson<ShopInfoResponse>(await fetch(url, { cache: "no-store" }));
   const error = apiError(payload);
-  if (error || !payload.response?.shop_name) throw new Error(error ?? "Shopee did not return the shop name");
-  return { name: payload.response.shop_name, logo: payload.response.shop_logo ?? null, requestId: payload.request_id ?? null };
+  const shopName = payload.response?.shop_name?.trim() || payload.response?.name?.trim();
+  if (error || !shopName) {
+    const fields = payload.response && typeof payload.response === "object" ? Object.keys(payload.response).sort().join(",") : "none";
+    throw new Error(error ?? `Shopee shop info response missing shop name (fields: ${fields || "none"})`);
+  }
+  return { name: shopName, logo: payload.response?.shop_logo ?? null, requestId: payload.request_id ?? null };
 }
 
 export async function persistShopeeConnection(input: {
@@ -126,3 +130,4 @@ export async function persistShopeeConnection(input: {
     `;
   });
 }
+
