@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { dataMode, getSql } from "@/src/lib/server/db";
 import { exchangeAuthorizationCode, getShopInfo, persistShopeeConnection } from "@/src/lib/server/shopee";
 
 export const dynamic = "force-dynamic";
@@ -15,6 +16,9 @@ export async function GET(request: Request) {
   const mainAccountId = mainAccountIdValue ? Number(mainAccountIdValue) : undefined;
   if (!code || (!shopId && !mainAccountId)) {
     return NextResponse.json({ ok: false, error: "Shopee callback is missing code and shop identity" }, { status: 400 });
+  }
+  if (dataMode() !== "database" || !getSql()) {
+    return NextResponse.json({ ok: false, error: "Database is not ready; authorization was not exchanged" }, { status: 503 });
   }
 
   try {
