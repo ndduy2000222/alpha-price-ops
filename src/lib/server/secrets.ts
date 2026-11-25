@@ -1,4 +1,4 @@
-import { createCipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 
 function encryptionKey(): Buffer {
   const encoded = process.env.SHOPEE_TOKEN_ENCRYPTION_KEY;
@@ -15,3 +15,12 @@ export function encryptSecret(value: string): string {
   const tag = cipher.getAuthTag();
   return ["v1", iv.toString("base64url"), tag.toString("base64url"), ciphertext.toString("base64url")].join(":");
 }
+
+export function decryptSecret(value: string): string {
+  const [version, ivEncoded, tagEncoded, ciphertextEncoded] = value.split(":");
+  if (version !== "v1" || !ivEncoded || !tagEncoded || !ciphertextEncoded) throw new Error("Invalid encrypted secret format");
+  const decipher = createDecipheriv("aes-256-gcm", encryptionKey(), Buffer.from(ivEncoded, "base64url"));
+  decipher.setAuthTag(Buffer.from(tagEncoded, "base64url"));
+  return Buffer.concat([decipher.update(Buffer.from(ciphertextEncoded, "base64url")), decipher.final()]).toString("utf8");
+}
+
