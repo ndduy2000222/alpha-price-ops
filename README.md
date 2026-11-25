@@ -31,8 +31,9 @@ pnpm build
 - Chạy migration `db/migrations/001_initial_schema.sql` bằng công cụ migration của nhà cung cấp PostgreSQL trước khi bật database mode.
 - Sao chép `.env.example` thành `.env.local`; không đưa `.env.local`, token hay Partner Key vào Git.
 - `/api/health` kiểm tra trạng thái ứng dụng và database; `/api/dashboard` trả snapshot cho giao diện.
+- `POST /api/sync/shopee/products` đọc danh sách sản phẩm Shopee theo trang, lấy model/giá/tồn kho và lưu vào `products`, `product_models`, `price_snapshots`, `sync_runs`. Nút `Đồng bộ Shopee` trên dashboard gọi endpoint này.
 
-Database mode hiện chỉ đọc dữ liệu. Luồng approval, worker Shopee và ghi giá thật vẫn bị khóa cho tới khi hoàn tất xác thực quyền, audit và pilot một SKU.
+Database mode hiện đọc dữ liệu thật sau khi chạy sync. Luồng approval, worker định kỳ, dữ liệu đối thủ và ghi giá thật vẫn bị khóa cho tới khi hoàn tất kiểm chứng và pilot một SKU.
 
 ## Callback Shopee Open Platform
 
@@ -50,3 +51,4 @@ Callback OAuth production là `https://alpha-price-ops.vercel.app/api/integratio
 ## Dữ liệu và an toàn
 
 Không dán Partner Key, token hay secret vào hội thoại, frontend, log hoặc Git. Khi triển khai thật, inject secret ở worker/server và tách token theo `shop_id`. Không bật Auto hoặc ghi dữ liệu hàng loạt khi chưa hoàn thành kiểm chứng quyền API, nguồn giá đối thủ và một lần thử được chủ dự án phê duyệt.
+
