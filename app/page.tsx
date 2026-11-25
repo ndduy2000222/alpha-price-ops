@@ -43,6 +43,7 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [toast, setToast] = useState("");
+  const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -97,6 +98,24 @@ export default function Home() {
     updateSku(item.id, { status: result.status, recommendation: result.proposedPrice, reason: result.reason });
     notify(`Đã đọc lại dữ liệu mock cho ${item.sku}.`);
   };
+  const syncProducts = async () => {
+    if (syncing) return;
+    setSyncing(true);
+    try {
+      const response = await fetch("/api/sync/shopee/products", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+      const result = await response.json() as { ok?: boolean; error?: string; itemsSeen?: number; modelsUpserted?: number };
+      if (!response.ok || !result.ok) throw new Error(result.error ?? "Không thể đồng bộ sản phẩm Shopee.");
+      const snapshot = await fetch("/api/dashboard", { cache: "no-store" }).then((value) => value.json()) as { mode: "demo" | "database"; skus: TrackedSku[]; decisions: DecisionRecord[] };
+      setSkus(snapshot.skus);
+      setLogs(snapshot.decisions);
+      setDataMode(snapshot.mode);
+      notify(`Đã đồng bộ ${result.itemsSeen ?? 0} sản phẩm và ${result.modelsUpserted ?? 0} phân loại từ Shopee.`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Không thể đồng bộ sản phẩm Shopee.");
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   return <div className="app-shell">
     <a className="skip-link" href="#main-content">Bỏ qua điều hướng</a>
@@ -107,7 +126,7 @@ export default function Home() {
       <div className="sidebar-bottom"><div className="worker-dot"><span /> {dataMode === "database" ? "Database adapter" : "Worker mock đang chạy"}</div><div className="sidebar-note">Nguồn dữ liệu hiện tại<br /><strong>{dataMode === "database" ? "PostgreSQL" : "Mock adapter"}</strong></div></div>
     </aside>
     <main className="main-shell" id="main-content" tabIndex={-1}>
-      <header className="topbar"><div className="top-group"><span className="top-label">Sàn</span><button className="select-button"><span className="shopee-icon">S</span>Shopee <Icon name="chevron" /></button><span className="divider" /><button className="select-button shop-select">Nhà Sách Alpha Official <Icon name="chevron" /></button></div><div className="top-group"><span className={`live-status ${globalPaused ? "paused" : ""}`}><span /> {globalPaused ? "Đã tạm dừng" : "Theo dõi đang hoạt động"}</span><span className="updated">Cập nhật: 14:26, 19/11/2026</span></div></header>
+      <header className="topbar"><div className="top-group"><span className="top-label">Sàn</span><button className="select-button"><span className="shopee-icon">S</span>Shopee <Icon name="chevron" /></button><span className="divider" /><button className="select-button shop-select">Nhà Sách Alpha Official <Icon name="chevron" /></button></div><div className="top-group"><button className="ghost-button sync-button" onClick={syncProducts} disabled={syncing}>{syncing ? "Đang đồng bộ…" : "Đồng bộ Shopee"}</button><span className={`live-status ${globalPaused ? "paused" : ""}`}><span /> {globalPaused ? "Đã tạm dừng" : "Theo dõi đang hoạt động"}</span><span className="updated">Cập nhật: 14:26, 19/11/2026</span></div></header>
       <div className="content">
         {loading && <div className="loading-banner" role="status">Đang tải dữ liệu vận hành…</div>}
         {page === "overview" && <Overview skus={skus} queue={queue} setPage={setPage} onSelect={setSelected} globalPaused={globalPaused} dataMode={dataMode} />}
@@ -163,3 +182,4 @@ function Settings({ globalPaused, setGlobalPaused }: { globalPaused: boolean; se
 function Check({ label, done }: { label: string; done: boolean }) { return <div className={`check-row ${done ? "done" : ""}`}><span>{done ? "✓" : "—"}</span>{label}</div>; }
 
 function SkuModal({ item, onClose, onPause, onRefresh }: { item: TrackedSku; onClose: () => void; onPause: (id: string) => void; onRefresh: (s: TrackedSku) => void }) { const offer = item.competitorOffers[0]; useEffect(() => { const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); }; document.addEventListener("keydown", closeOnEscape); return () => document.removeEventListener("keydown", closeOnEscape); }, [onClose]); return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="sku-modal-title" onMouseDown={(e) => e.stopPropagation()}><div className="modal-header"><div><span className="eyebrow">CHI TIẾT SKU</span><h2 id="sku-modal-title">{item.title}</h2><p>{item.sku} · {item.variant}</p></div><button className="close-button" aria-label="Đóng chi tiết SKU" onClick={onClose}>×</button></div><div className="modal-stats"><div><span>Giá hiện tại</span><strong>{vnd(item.currentPrice)}</strong></div><div><span>Đối thủ thấp nhất</span><strong>{vnd(offer?.price)}</strong><small>{offer?.shopName}</small></div><div><span>Giá đề xuất</span><strong className="orange-text">{vnd(item.recommendation)}</strong><small>{item.mode} · {item.rule.kind === "amount" ? `-${vnd(item.rule.value)}` : `-${item.rule.value}%`}</small></div></div><div className="modal-section"><h3>Quyết định gần nhất</h3><div className="decision-box"><Status status={item.status} mode={item.mode} /><p>{item.reason}</p></div></div><div className="modal-section"><h3>Đối thủ được gắn</h3><div className="competitor-link"><span className="book-thumb">{offer?.itemName?.slice(0, 1) ?? "?"}</span><div><strong>{offer?.shopName ?? "Chưa gắn"}</strong><span>{offer?.itemName} · {offer?.variantName}</span><small>Nguồn {offer?.source} · cập nhật {offer ? new Date(offer.observedAt).toLocaleString("vi-VN") : "—"}</small></div><span className={offer?.inStock ? "stock-ok" : "stock-out"}>{offer?.inStock ? "Còn hàng" : "Hết hàng"}</span></div></div><div className="modal-footer"><button className="ghost-button danger" onClick={() => { onPause(item.id); onClose(); }}> {item.paused ? "Tiếp tục SKU" : "Tạm dừng SKU"}</button><div><button className="ghost-button" onClick={() => onRefresh(item)}>Đọc lại dữ liệu</button><button className="primary-button" onClick={onClose}>Đóng</button></div></div></div></div>; }
+
