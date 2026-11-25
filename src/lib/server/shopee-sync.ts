@@ -110,8 +110,8 @@ async function listItemPage(config: { partnerId: number; partnerKey: string; acc
   const totalCount = number(response.total_count);
   const hasNext = booleanValue(response.has_next_page);
   const returnedNextOffset = number(response.next_offset);
-  const calculatedNextOffset = returnedNextOffset ?? cursor.offset + items.length;
-  const hasMoreForStatus = items.length > 0 && (hasNext || (totalCount != null && calculatedNextOffset < totalCount));
+  const calculatedNextOffset = returnedNextOffset != null && returnedNextOffset > cursor.offset ? returnedNextOffset : cursor.offset + items.length;
+  const hasMoreForStatus = items.length > 0 && calculatedNextOffset > cursor.offset && (hasNext || (totalCount != null && calculatedNextOffset < totalCount));
   const nextCursor = hasMoreForStatus
     ? { statusIndex: cursor.statusIndex, offset: calculatedNextOffset }
     : cursor.statusIndex + 1 < ITEM_STATUSES.length
