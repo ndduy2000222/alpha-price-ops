@@ -7,6 +7,7 @@ const ITEM_LIST_PATH = "/api/v2/product/get_item_list";
 const ITEM_BASE_INFO_PATH = "/api/v2/product/get_item_base_info";
 const PAGE_SIZE = 100;
 const ITEM_BATCH_SIZE = 50;
+const ITEM_STATUSES = ["NORMAL", "UNLIST", "BANNED", "DELETED"] as const;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -52,7 +53,7 @@ function sign(path: string, timestamp: number, partnerId: number, partnerKey: st
   return createHmac("sha256", partnerKey).update(`${partnerId}${path}${timestamp}${accessToken}${shopId}`).digest("hex");
 }
 
-async function shopeeGet(path: string, config: { partnerId: number; partnerKey: string; accessToken: string; shopId: number }, params: Record<string, string | number>): Promise<JsonRecord> {
+async function shopeeGet(path: string, config: { partnerId: number; partnerKey: string; accessToken: string; shopId: number }, params: Record<string, string | number | string[]>): Promise<JsonRecord> {
   const timestamp = Math.floor(Date.now() / 1000);
   const url = new URL(`${SHOPEE_BASE_URL}${path}`);
   url.searchParams.set("partner_id", String(config.partnerId));
@@ -60,7 +61,10 @@ async function shopeeGet(path: string, config: { partnerId: number; partnerKey: 
   url.searchParams.set("access_token", config.accessToken);
   url.searchParams.set("shop_id", String(config.shopId));
   url.searchParams.set("sign", sign(path, timestamp, config.partnerId, config.partnerKey, config.accessToken, config.shopId));
-  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, String(value));
+  for (const [key, value] of Object.entries(params)) {
+    if (Array.isArray(value)) value.forEach((entry) => url.searchParams.append(key, entry));
+    else url.searchParams.set(key, String(value));
+  }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12000);
   let response: Response;
@@ -83,21 +87,23 @@ async function shopeeGet(path: string, config: { partnerId: number; partnerKey: 
 
 async function listItemIds(config: { partnerId: number; partnerKey: string; accessToken: string; shopId: number }): Promise<number[]> {
   const itemIds: number[] = [];
-  const seenOffsets = new Set<number>();
-  let offset = 0;
-  while (!seenOffsets.has(offset)) {
-    seenOffsets.add(offset);
-    const payload = await shopeeGet(ITEM_LIST_PATH, config, { offset, page_size: PAGE_SIZE, item_status: "NORMAL" });
-    const response = record(payload.response);
-    const items = [...records(response.item), ...records(response.item_list)];
-    for (const item of items) {
-      const itemId = number(item.item_id);
-      if (itemId != null && !itemIds.includes(itemId)) itemIds.push(itemId);
+  for (const itemStatus of ITEM_STATUSES) {
+    const seenOffsets = new Set<number>();
+    let offset = 0;
+    while (!seenOffsets.has(offset)) {
+      seenOffsets.add(offset);
+      const payload = await shopeeGet(ITEM_LIST_PATH, config, { offset, page_size: PAGE_SIZE, item_status: itemStatus });
+      const response = record(payload.response);
+      const items = [...records(response.item), ...records(response.item_list)];
+      for (const item of items) {
+        const itemId = number(item.item_id);
+        if (itemId != null && !itemIds.includes(itemId)) itemIds.push(itemId);
+      }
+      const hasNext = response.has_next_page === true;
+      const nextOffset = number(response.next_offset);
+      if (!hasNext || nextOffset == null || nextOffset === offset || items.length === 0) break;
+      offset = nextOffset;
     }
-    const hasNext = response.has_next_page === true;
-    const nextOffset = number(response.next_offset);
-    if (!hasNext || nextOffset == null || nextOffset === offset || items.length === 0) break;
-    offset = nextOffset;
   }
   return itemIds;
 }
