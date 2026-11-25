@@ -4,7 +4,7 @@ import { getSql } from "./db";
 
 const SHOPEE_BASE_URL = "https://partner.shopeemobile.com";
 const TOKEN_PATH = "/api/v2/auth/token/get";
-const SHOP_INFO_PATH = "/api/v2/shop/get_shop_info";
+const SHOP_PROFILE_PATH = "/api/v2/shop/get_profile";
 
 type ShopeeConfig = { partnerId: number; partnerKey: string };
 
@@ -74,12 +74,12 @@ export async function exchangeAuthorizationCode(input: { code: string; shopId?: 
 export async function getShopInfo(input: { accessToken: string; shopId: number }) {
   const { partnerId } = config();
   const timestamp = Math.floor(Date.now() / 1000);
-  const url = new URL(`${SHOPEE_BASE_URL}${SHOP_INFO_PATH}`);
+  const url = new URL(`${SHOPEE_BASE_URL}${SHOP_PROFILE_PATH}`);
   url.searchParams.set("partner_id", String(partnerId));
   url.searchParams.set("timestamp", String(timestamp));
   url.searchParams.set("access_token", input.accessToken);
   url.searchParams.set("shop_id", String(input.shopId));
-  url.searchParams.set("sign", sign(SHOP_INFO_PATH, timestamp, input.accessToken, input.shopId));
+  url.searchParams.set("sign", sign(SHOP_PROFILE_PATH, timestamp, input.accessToken, input.shopId));
   const payload = await readJson<ShopInfoResponse>(await fetch(url, { cache: "no-store" }));
   const error = apiError(payload);
   const shopName = payload.response?.shop_name?.trim() || payload.response?.name?.trim();
