@@ -5,14 +5,25 @@ import { dataMode, getSql } from "./db";
 const SHOPEE_BASE_URL = "https://partner.shopeemobile.com";
 const ITEM_LIST_PATH = "/api/v2/product/get_item_list";
 const ITEM_BASE_INFO_PATH = "/api/v2/product/get_item_base_info";
-const PAGE_SIZE = 100;
+const PAGE_SIZE = 50;
 const ITEM_BATCH_SIZE = 50;
 const ITEM_STATUSES = ["NORMAL", "UNLIST", "BANNED", "DELETED"] as const;
 
 type JsonRecord = Record<string, unknown>;
 
+export type SyncCursor = {
+  statusIndex: number;
+  offset: number;
+};
+
 type SyncResult = {
   shopId: string;
+  runId: string;
+  complete: boolean;
+  nextCursor: SyncCursor | null;
+  statusFilter: string;
+  listedOnPage: number;
+  totalForStatus: number | null;
   itemsSeen: number;
   productsUpserted: number;
   modelsUpserted: number;
@@ -42,6 +53,10 @@ function number(...values: unknown[]): number | null {
     if (Number.isFinite(parsed)) return Math.round(parsed);
   }
   return null;
+}
+
+function booleanValue(value: unknown): boolean {
+  return value === true || value === 1 || value === "1" || value === "true" || value === "TRUE";
 }
 
 function apiError(payload: JsonRecord): string | null {
@@ -85,27 +100,24 @@ async function shopeeGet(path: string, config: { partnerId: number; partnerKey: 
   return payload;
 }
 
-async function listItemIds(config: { partnerId: number; partnerKey: string; accessToken: string; shopId: number }): Promise<number[]> {
-  const itemIds: number[] = [];
-  for (const itemStatus of ITEM_STATUSES) {
-    const seenOffsets = new Set<number>();
-    let offset = 0;
-    while (!seenOffsets.has(offset)) {
-      seenOffsets.add(offset);
-      const payload = await shopeeGet(ITEM_LIST_PATH, config, { offset, page_size: PAGE_SIZE, item_status: itemStatus });
-      const response = record(payload.response);
-      const items = [...records(response.item), ...records(response.item_list)];
-      for (const item of items) {
-        const itemId = number(item.item_id);
-        if (itemId != null && !itemIds.includes(itemId)) itemIds.push(itemId);
-      }
-      const hasNext = response.has_next_page === true;
-      const nextOffset = number(response.next_offset);
-      if (!hasNext || nextOffset == null || nextOffset === offset || items.length === 0) break;
-      offset = nextOffset;
-    }
-  }
-  return itemIds;
+async function listItemPage(config: { partnerId: number; partnerKey: string; accessToken: string; shopId: number }, cursor: SyncCursor): Promise<{ itemIds: number[]; itemStatus: string; totalCount: number | null; nextCursor: SyncCursor | null }> {
+  const itemStatus = ITEM_STATUSES[cursor.statusIndex];
+  if (!itemStatus) return { itemIds: [], itemStatus: "done", totalCount: 0, nextCursor: null };
+  const payload = await shopeeGet(ITEM_LIST_PATH, config, { offset: cursor.offset, page_size: PAGE_SIZE, item_status: itemStatus });
+  const response = record(payload.response);
+  const items = [...records(response.item), ...records(response.item_list)];
+  const itemIds = items.map((item) => number(item.item_id)).filter((itemId): itemId is number => itemId != null);
+  const totalCount = number(response.total_count);
+  const hasNext = booleanValue(response.has_next_page);
+  const returnedNextOffset = number(response.next_offset);
+  const calculatedNextOffset = returnedNextOffset ?? cursor.offset + items.length;
+  const hasMoreForStatus = items.length > 0 && (hasNext || (totalCount != null && calculatedNextOffset < totalCount));
+  const nextCursor = hasMoreForStatus
+    ? { statusIndex: cursor.statusIndex, offset: calculatedNextOffset }
+    : cursor.statusIndex + 1 < ITEM_STATUSES.length
+      ? { statusIndex: cursor.statusIndex + 1, offset: 0 }
+      : null;
+  return { itemIds, itemStatus, totalCount, nextCursor };
 }
 
 function modelRows(item: JsonRecord): JsonRecord[] {
@@ -186,7 +198,7 @@ async function upsertItem(sql: NonNullable<ReturnType<typeof getSql>>, shopId: s
   return { models, snapshots, skipped };
 }
 
-export async function syncShopeeProducts(externalShopId?: string): Promise<SyncResult> {
+export async function syncShopeeProducts(externalShopId?: string, cursor: SyncCursor | null = null, runId?: string): Promise<SyncResult> {
   if (dataMode() !== "database") throw new Error("Database mode is required for Shopee product sync");
   const sql = getSql();
   if (!sql) throw new Error("Database connection is not configured");
@@ -200,7 +212,10 @@ export async function syncShopeeProducts(externalShopId?: string): Promise<SyncR
   const partnerKey = process.env.SHOPEE_PARTNER_KEY;
   if (!Number.isSafeInteger(shopId) || !Number.isSafeInteger(partnerId) || !partnerKey) throw new Error("Shopee partner credentials are not configured");
   const accessToken = decryptSecret(connection.access_token_ciphertext);
-  const [run] = await sql`insert into sync_runs (shop_id, provider, sync_kind, status) values (${connection.shop_id}, 'shopee', 'products', 'running') returning id`;
+  const [run] = runId
+    ? await sql`select id from sync_runs where id = ${runId} and shop_id = ${connection.shop_id} and provider = 'shopee' and sync_kind = 'products' limit 1`
+    : await sql`insert into sync_runs (shop_id, provider, sync_kind, status) values (${connection.shop_id}, 'shopee', 'products', 'running') returning id`;
+  if (!run) throw new Error("The requested product sync run was not found");
   let itemsSeen = 0;
   let productsUpserted = 0;
   let modelsUpserted = 0;
@@ -208,13 +223,13 @@ export async function syncShopeeProducts(externalShopId?: string): Promise<SyncR
   let skippedModels = 0;
   try {
     const config = { partnerId, partnerKey, accessToken, shopId };
-    const itemIds = await listItemIds(config);
+    const page = await listItemPage(config, cursor ?? { statusIndex: 0, offset: 0 });
     const observedAt = new Date();
-    for (let index = 0; index < itemIds.length; index += ITEM_BATCH_SIZE) {
-      const batch = itemIds.slice(index, index + ITEM_BATCH_SIZE);
+    for (let index = 0; index < page.itemIds.length; index += ITEM_BATCH_SIZE) {
+      const batch = page.itemIds.slice(index, index + ITEM_BATCH_SIZE);
       const payload = await shopeeGet(ITEM_BASE_INFO_PATH, config, { item_id_list: batch.join(",") });
       const response = record(payload.response);
-      const items = records(response.item_list).concat(records(response.items), records(response.item));
+      const items = records(response.item_list).concat(records(response.items), records(response.item)).map((item) => ({ ...item, item_status: text(item.item_status) ?? page.itemStatus }));
       for (const item of items) {
         itemsSeen += 1;
         const result = await upsertItem(sql, connection.shop_id, item, observedAt);
@@ -224,14 +239,19 @@ export async function syncShopeeProducts(externalShopId?: string): Promise<SyncR
         skippedModels += result.skipped;
       }
     }
+    const complete = page.nextCursor == null;
     const status = skippedModels > 0 ? "partial" : "succeeded";
-    await sql`update sync_runs set status = ${status}, records_seen = ${itemsSeen}, records_upserted = ${modelsUpserted}, finished_at = now() where id = ${run.id}`;
-    await sql`update shop_connections set last_sync_at = now(), updated_at = now() where shop_id = ${connection.shop_id} and provider = 'shopee'`;
-    await sql`insert into audit_events (shop_id, actor_id, action, entity_type, entity_id, after_state, reason) values (${connection.shop_id}, 'shopee-sync', 'products_synced', 'sync_run', ${String(run.id)}, ${JSON.stringify({ itemsSeen, modelsUpserted, snapshotsCreated, skippedModels })}::jsonb, 'Shopee product read synchronization completed')`;
-    return { shopId: connection.external_shop_id, itemsSeen, productsUpserted, modelsUpserted, snapshotsCreated, skippedModels, status };
+    if (complete) {
+      await sql`update sync_runs set status = ${status}, records_seen = records_seen + ${itemsSeen}, records_upserted = records_upserted + ${modelsUpserted}, finished_at = now() where id = ${run.id}`;
+      await sql`update shop_connections set last_sync_at = now(), updated_at = now() where shop_id = ${connection.shop_id} and provider = 'shopee'`;
+      await sql`insert into audit_events (shop_id, actor_id, action, entity_type, entity_id, after_state, reason) values (${connection.shop_id}, 'shopee-sync', 'products_synced', 'sync_run', ${String(run.id)}, ${JSON.stringify({ itemsSeen, modelsUpserted, snapshotsCreated, skippedModels })}::jsonb, 'Shopee product read synchronization completed')`;
+    } else {
+      await sql`update sync_runs set records_seen = records_seen + ${itemsSeen}, records_upserted = records_upserted + ${modelsUpserted} where id = ${run.id}`;
+    }
+    return { shopId: connection.external_shop_id, runId: String(run.id), complete, nextCursor: page.nextCursor, statusFilter: page.itemStatus, listedOnPage: page.itemIds.length, totalForStatus: page.totalCount, itemsSeen, productsUpserted, modelsUpserted, snapshotsCreated, skippedModels, status };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Shopee product sync failed";
-    await sql`update sync_runs set status = 'failed', records_seen = ${itemsSeen}, records_upserted = ${modelsUpserted}, error_message = ${message.slice(0, 1000)}, finished_at = now() where id = ${run.id}`;
+    await sql`update sync_runs set status = 'failed', records_seen = records_seen + ${itemsSeen}, records_upserted = records_upserted + ${modelsUpserted}, error_message = ${message.slice(0, 1000)}, finished_at = now() where id = ${run.id}`;
     throw error;
   }
 }
